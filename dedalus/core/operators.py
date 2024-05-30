@@ -560,26 +560,7 @@ class UnaryGridFunction(NonlinearOperator, FutureField):
         self.tensorsig = arg.tensorsig
         self.dtype = arg.dtype
 
-    @property
-    def name(self):
-        return self.func.__name__
-
-    def _build_bases(self, arg0):
-        bases = arg0.bases
-        if all(basis is None for basis in bases):
-            bases = arg0.domain
-        return bases
-
-    def new_operands(self, arg):
-        return UnaryGridFunction(self.func, arg)
-
-    def reinitialize(self, **kw):
-        arg = self.args[0].reinitialize(**kw)
-        return self.new_operands(arg)
-
-    def sym_diff(self, var):
-        """Symbolically differentiate with respect to specified operand."""
-        diff_map = {np.absolute: lambda x: np.sign(x),
+        self.diff_map = {np.absolute: lambda x: np.sign(x),
                     np.sign: lambda x: 0,
                     np.exp: lambda x: np.exp(x),
                     np.exp2: lambda x: np.exp2(x) * np.log(2),
@@ -601,9 +582,29 @@ class UnaryGridFunction(NonlinearOperator, FutureField):
                     np.arccosh: lambda x: (x**2 - 1)**(-1/2),
                     np.arctanh: lambda x: (1 - x**2)**(-1),
                     scp.erf: lambda x: 2*(np.pi)**(-1/2)*np.exp(-x**2)}
+
+    @property
+    def name(self):
+        return self.func.__name__
+
+    def _build_bases(self, arg0):
+        bases = arg0.bases
+        if all(basis is None for basis in bases):
+            bases = arg0.domain
+        return bases
+
+    def new_operands(self, arg):
+        return UnaryGridFunction(self.func, arg)
+
+    def reinitialize(self, **kw):
+        arg = self.args[0].reinitialize(**kw)
+        return self.new_operands(arg)
+
+    def sym_diff(self, var):
+        """Symbolically differentiate with respect to specified operand."""
         arg = self.args[0]
         arg_diff = arg.sym_diff(var)
-        return diff_map[self.func](arg) * arg_diff
+        return self.diff_map[self.func](arg) * arg_diff
 
     def check_conditions(self):
         # Field must be in grid layout
@@ -611,6 +612,7 @@ class UnaryGridFunction(NonlinearOperator, FutureField):
 
     def enforce_conditions(self):
         self.args[0].require_grid_space()
+        return self.dist.grid_layout
 
     def operate(self, out):
         # References
@@ -619,6 +621,33 @@ class UnaryGridFunction(NonlinearOperator, FutureField):
         out.preset_layout(self._grid_layout)
         self.func(arg0.data, out=out.data)
 
+    def operate_jvp(self, out, tangent):
+        arg0, = self.args
+        out.preset_layout(self._grid_layout)
+        self.func(arg0.data, out=out.data)
+        if tangent:
+            tan0, = self.arg_tangents
+            tangent.preset_layout(self._grid_layout)
+            np.multiply(self.diff_map[self.func](arg0.data),tan0.data,out=tangent.data)
+
+    def operate_vjp(self, layout, cotangents):
+        arg0, = self.args
+        if isinstance(arg0, Future):
+            arg0.cotangent.change_layout(layout)
+            cotan0 = arg0.cotangent
+        elif isinstance(arg0, Field):
+            if arg0 not in cotangents:
+                cotan0 = arg0.copy()
+                cotan0.adjoint = True
+                cotan0.data.fill(0)
+                cotangents[arg0] = cotan0
+            else:
+                cotan0 = cotangents[arg0]
+        # Add adjoint contribution in-place (required for accumulation)
+        self.cotangent.change_layout(layout)
+        temp = self.diff_map[self.func](arg0.data)*self.cotangent.data
+        # TODO: optimize with axpy
+        np.add(cotan0.data, temp, out=cotan0.data)
 
 class LinearOperator(FutureField):
     """
@@ -1037,7 +1066,10 @@ class SpectralOperator1D(SpectralOperator):
         if self.cotangent.data.size and cotan0.data.size:
             # Can't apply inplace
             data_axis = self.last_axis + len(arg0.tensorsig)
-            temp = apply_matrix((self.subspace_matrix(layout).T).tocsr(), self.cotangent.data, data_axis)
+            mat = np.conj(self.subspace_matrix(layout)).T
+            if sparse.isspmatrix(mat):
+                mat = mat.tocsr()
+            temp = apply_matrix(mat, self.cotangent.data, data_axis)
             np.add(cotan0.data, temp, out=cotan0.data)
 
 @alias('dt')
@@ -1680,17 +1712,7 @@ class Convert(SpectralOperator, metaclass=MultiClass):
         else:
             super().operate(out)
 
-    def operate_adjoint(self, input, out):
-        """Perform operation."""
-        arg = input
-        layout = arg.layout
-        # Copy for grid space
-        if layout.grid_space[self.last_axis]:
-            out.preset_layout(layout)
-            np.copyto(out.data, arg.data)
-        # Revert to matrix application for coeff space
-        else:
-            super().operate_adjoint(arg,out)
+    # TODO: jvp and vjp
 
 
 class ConvertSame(Convert):
