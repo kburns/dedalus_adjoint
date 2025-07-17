@@ -354,10 +354,10 @@ class EigenvalueSolver(SolverBase):
         for var in self.state:
             var['c'] = 0
         subsystem.scatter(self.left_eigenvectors[:, index], self.state_adjoint)
-    
+
     def compute_sensitivity(self, p, index, subsystem=0):
         """
-        Computes the sensitivity of the (index)-eigenvector 
+        Computes the sensitivity of the (index)-eigenvector
         with respect to parameter p
         """
         # NOTE: What to do with different subsystems?
@@ -637,7 +637,7 @@ class NonlinearBoundaryValueSolver(SolverBase):
         if handlers is None:
             handlers = self.evaluator.handlers
         self.evaluator.evaluate_handlers(handlers, iteration=self.iteration)
-    
+
     def solve_adjoint(self, G):
         # subsystems.build_subproblem_matrices(self, self.subproblems, ['dH'])
         # Ensure coeff space before subsystem gathers/scatters
@@ -670,7 +670,7 @@ class NonlinearBoundaryValueSolver(SolverBase):
             sp.scatter_outputs(pY, Y)
         return Y
 
-    def compute_sensitivities(self, cotangents, id=None):
+    def accumulate_sensitivities(self, cotangents, id=None):
         # TODO: compute G from cost?
         # G = h.evaluate_vjp(1)[self.state]?
         # Allocate adjoint fields
@@ -918,7 +918,7 @@ class InitialValueSolver(SolverBase):
         self.iteration = iter
         self.evaluator.handlers[0].last_iter_div = iter-1
         # TODO: Fix this for checkpointing
-        self.sim_time = self.problem.time['g'] = self.initial_sim_time 
+        self.sim_time = self.problem.time['g'] = self.initial_sim_time
         # reset timestepper
         self.timestepper.reset()
 
@@ -1056,7 +1056,7 @@ class InitialValueSolver(SolverBase):
         logger.info(f"Run time (iter end-{self.initial_iteration}): {run_time:{format}} sec")
         logger.info(f"CPU time (iter end-{self.initial_iteration}): {run_time*cpus/3600:{format}} cpu-hr")
         logger.info(f"Speed: {(modes*stages/cpus/run_time):{format}} mode-stages/cpu-sec")
-        
+
     def dump_profiles(self, profiler, name):
         "Save profiling data to disk."
         comm = self.dist.comm
